@@ -41,6 +41,12 @@ let Py_GE: Int32 = 5
 let Py_Initialize: @convention(c) () -> Void =
     PythonLibrary.loadSymbol(name: "Py_Initialize")
 
+let PyGILState_Ensure: @convention(c) () -> UnsafeMutableRawPointer? =
+    PythonLibrary.loadSymbol(name: "PyGILState_Ensure")
+
+let PyGILState_Release: @convention(c) (UnsafeMutableRawPointer?) -> Void =
+    PythonLibrary.loadSymbol(name: "PyGILState_Release")
+
 let Py_IncRef: @convention(c) (PyObjectPointer?) -> Void =
     PythonLibrary.loadSymbol(name: "Py_IncRef")
 
@@ -134,6 +140,12 @@ let PySlice_New: @convention(c) (
     PyObjectPointer?, PyObjectPointer?,
     PyObjectPointer?) -> PyObjectPointer? =
     PythonLibrary.loadSymbol(name: "PySlice_New")
+
+let Py_BuildValue: @convention(c) (UnsafeRawPointer) -> PyObjectPointer? =
+    PythonLibrary.loadSymbol(name: "Py_BuildValue")
+
+let PySequence_Check: @convention(c) (UnsafeRawPointer) -> Int =
+    PythonLibrary.loadSymbol(name: "PySequence_Check")
 
 let PyTuple_New: @convention(c) (Int) -> PyObjectPointer? =
     PythonLibrary.loadSymbol(name: "PyTuple_New")
