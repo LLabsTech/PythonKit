@@ -734,6 +734,59 @@ public struct PythonInterface {
 }
 
 //===----------------------------------------------------------------------===//
+// Helper to enter and leave the GIL for non-Python created threads.
+// See https://docs.python.org/3/c-api/init.html#non-python-created-threads
+//===----------------------------------------------------------------------===//
+
+import Foundation
+
+private final class PyThread {
+    static let stateKey = "pythonkit.PythonThreadStateKey"
+
+    var threadState: PyGILState_State? {
+        get {
+            return Thread.current.threadDictionary[PyThread.stateKey] as? PyGILState_State
+        }
+        set {
+            Thread.current.threadDictionary[PyThread.stateKey] = newValue
+        }
+    }
+
+    /// Enter the GIL and initialize Python thread state.
+    func enterGIL() {
+        guard threadState == nil else {
+            fatalError("The GIL is already held by this thread.")
+        }
+        threadState = PyGILState_Ensure()
+    }
+
+    /// Exit the GIL.
+    func leaveGIL() {
+        guard let state = threadState else {
+            fatalError("The GIL is not held by this thread.")
+        }
+        PyGILState_Release(state)
+        threadState = nil
+    }
+}
+
+/// Execute body while holding the GIL.
+public func withGIL<T>(_ body: () throws -> T) rethrows -> T {
+    let thread = PyThread()
+    thread.enterGIL()
+    defer { thread.leaveGIL() }
+    return try body()
+}
+
+/// Leave the GIL, execute the body, then re-enter the GIL.
+public func withoutGIL<T>(_ body: () throws -> T) rethrows -> T {
+    let thread = PyThread()
+    thread.leaveGIL()
+    defer { thread.enterGIL() }
+    return try body()
+}
+
+//===----------------------------------------------------------------------===//
 // Helpers for Python tuple types
 //===----------------------------------------------------------------------===//
 
