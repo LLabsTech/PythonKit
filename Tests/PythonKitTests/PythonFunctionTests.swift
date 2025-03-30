@@ -1,5 +1,5 @@
 import XCTest
-import PythonKit
+@testable import PythonKit
 
 class PythonFunctionTests: XCTestCase {
     private var canUsePythonFunction: Bool {
@@ -46,6 +46,22 @@ class PythonFunctionTests: XCTestCase {
 
         let pythonSelectOutput = pythonSelect(true, y: 2, x: 3)
         XCTAssertEqual(pythonSelectOutput, 3)
+    }
+
+    func testSingleArgumentAsyncFunction() throws {
+        // Create an async function that doubles a number after a delay
+        let delayedDouble = PythonFunction(awaitable: { (num: PythonObject) async throws -> PythonConvertible in
+            // Simulate async work
+            try await Task.sleep(nanoseconds: 100_000_000)  // 0.1 seconds
+            let swiftNum = Int(num)!
+            return swiftNum * 2
+        })
+
+        let asyncTests = PythonAsyncFunctionTests.pythonModule
+        let tests = asyncTests.AsyncFunctionTests()
+        tests.set_function(delayedDouble)
+        let result = tests.invoke_function_sync(21)
+        XCTAssertEqual(result, 42)
     }
 
     // From https://www.geeksforgeeks.org/create-classes-dynamically-in-python
