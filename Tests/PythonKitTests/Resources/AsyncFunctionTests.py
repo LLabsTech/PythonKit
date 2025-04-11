@@ -5,7 +5,7 @@ class AsyncFunctionTests:
     def __init__(self) -> None:
         self.function: Optional[Callable[[int], Awaitable[int]]] = None
 
-    async def set_function(self, function: Callable[[int], Awaitable[int]]) -> None:
+    def set_function(self, function: Callable[[int], Awaitable[int]]) -> None:
         # Store the async function
         self.function = function
 

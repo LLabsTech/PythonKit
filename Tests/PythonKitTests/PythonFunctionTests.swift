@@ -51,9 +51,8 @@ class PythonFunctionTests: XCTestCase {
     func testSingleArgumentAsyncFunction() throws {
         // Create an async function that doubles a number after a delay
         let delayedDouble = PythonFunction(awaitable: { (num: PythonObject) async throws -> PythonConvertible in
-            // Simulate async work
+            let swiftNum = withGIL { Int(num)! }
             try await Task.sleep(nanoseconds: 100_000_000)  // 0.1 seconds
-            let swiftNum = Int(num)!
             return swiftNum * 2
         })
 
