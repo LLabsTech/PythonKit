@@ -734,6 +734,59 @@ public struct PythonInterface {
 }
 
 //===----------------------------------------------------------------------===//
+// Helper to enter and leave the GIL for non-Python created threads.
+// See https://docs.python.org/3/c-api/init.html#non-python-created-threads
+//===----------------------------------------------------------------------===//
+
+import Foundation
+
+private final class PyThread {
+    static let stateKey = "pythonkit.PythonThreadStateKey"
+
+    var threadState: PyGILState_State? {
+        get {
+            return Thread.current.threadDictionary[PyThread.stateKey] as? PyGILState_State
+        }
+        set {
+            Thread.current.threadDictionary[PyThread.stateKey] = newValue
+        }
+    }
+
+    /// Enter the GIL and initialize Python thread state.
+    func enterGIL() {
+        guard threadState == nil else {
+            fatalError("The GIL is already held by this thread.")
+        }
+        threadState = PyGILState_Ensure()
+    }
+
+    /// Exit the GIL.
+    func leaveGIL() {
+        guard let state = threadState else {
+            fatalError("The GIL is not held by this thread.")
+        }
+        PyGILState_Release(state)
+        threadState = nil
+    }
+}
+
+/// Execute body while holding the GIL.
+public func withGIL<T>(_ body: () throws -> T) rethrows -> T {
+    let thread = PyThread()
+    thread.enterGIL()
+    defer { thread.leaveGIL() }
+    return try body()
+}
+
+/// Leave the GIL, execute the body, then re-enter the GIL.
+public func withoutGIL<T>(_ body: () throws -> T) rethrows -> T {
+    let thread = PyThread()
+    thread.leaveGIL()
+    defer { thread.enterGIL() }
+    return try body()
+}
+
+//===----------------------------------------------------------------------===//
 // Helpers for Python tuple types
 //===----------------------------------------------------------------------===//
 
@@ -1669,10 +1722,29 @@ public struct PythonFunction {
         }
     }
 
+    @_disfavoredOverload
+    public init(awaitable fn: @escaping (PythonObject) async throws -> PythonConvertible) {
+        function = PyFunction { argumentsAsTuple in
+            return Self.createAsyncBridge {
+                try await fn(argumentsAsTuple[0])
+            }
+        }
+    }
+
     /// For cases where the Swift function should accept more (or less) than one parameter, accept an ordered array of all arguments instead.
     public init(_ fn: @escaping ([PythonObject]) throws -> PythonConvertible) {
         function = PyFunction { argumentsAsTuple in
             return try fn(argumentsAsTuple.map { $0 })
+        }
+    }
+
+    /// Async form of multi-arg function.
+    public init(awaitable fn: @escaping ([PythonObject]) async throws -> PythonConvertible) {
+        function = PyFunction { argumentsAsTuple in
+            let swiftArgs = argumentsAsTuple.map { $0 }
+            return Self.createAsyncBridge {
+                try await fn(swiftArgs)
+            }
         }
     }
 
@@ -1688,6 +1760,57 @@ public struct PythonFunction {
                 kwargs.append((String(key)!, value))
             }
             return try fn(argumentsAsTuple.map { $0 }, kwargs)
+        }
+    }
+
+    /// Async form of function that accept kwargs.
+    public init(awaitable fn: @escaping ([PythonObject], [(key: String, value: PythonObject)]) async throws -> PythonConvertible) {
+        function = PyFunction { argumentsAsTuple, keywordArgumentsAsDictionary in
+            let swiftArgs = argumentsAsTuple.map { $0 }
+            let swiftKwargs = keywordArgumentsAsDictionary.items().compactMap { keyAndValue -> (String, PythonObject)? in
+                guard let key = String(keyAndValue.tuple2.0) else {
+                    return nil
+                }
+                return (key, keyAndValue.tuple2.1)
+            }
+
+            return Self.createAsyncBridge {
+                try await fn(swiftArgs, swiftKwargs)
+            }
+        }
+    }
+
+    /// Helper function that creates an asyncio future and bridges Swift async/await to Python.
+    private static func createAsyncBridge(_ asyncOperation: @escaping () async throws -> PythonConvertible) -> PythonObject {
+        let loop = Python.import("asyncio").get_running_loop()
+        let future = loop.create_future()
+
+        Task {
+            var err: Error?
+            var result: PythonConvertible?
+            do {
+                result = try await asyncOperation()
+            } catch {
+                err = error
+            }
+            Self.completeFuture(loop, future, result, err)
+        }
+
+        return future
+    }
+
+    /// Helper to complete the future.
+    private static func completeFuture(
+        _ loop: PythonObject, _ future: PythonObject, _ result: PythonConvertible?, _ error: Error?) {
+        withGIL {
+            if let error {
+                loop.call_soon_threadsafe(future.set_exception, Python.ValueError("\(error)"))
+            } else {
+                guard let result else {
+                    fatalError("Result should exist if error is nil.")
+                }
+                loop.call_soon_threadsafe(future.set_result, result)
+            }
         }
     }
 }
